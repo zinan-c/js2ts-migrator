@@ -1,0 +1,12 @@
+[package]
+name = "js2ts-migrator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+walkdir = "2"
+swc_ecma_parser = "0.148"
+swc_common = "0.37"
+anyhow = "1.0"
+swc_ecma_codegen = "0.148"
