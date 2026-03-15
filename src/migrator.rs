@@ -2,13 +2,14 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use anyhow::Error;
-use swc_common::{FileName, FilePathMapping, SourceMap, DUMMY_SP};
+use swc_common::{FilePathMapping, SourceMap, DUMMY_SP};
 use swc_ecma_codegen::{text_writer::JsWriter, Config, Emitter};
 use swc_ecma_parser::ast::{
-    Decl, Expr, Lit, Module, ModuleItem, Pat, Stmt, TsArrayType, TsKeywordType,
-    TsKeywordTypeKind, TsType, TsTypeAnn,
+    Expr, Lit, Module, Pat, TsArrayType, TsKeywordType, TsKeywordTypeKind, TsType, TsTypeAnn,
+    VarDeclarator,
 };
 use swc_ecma_parser::{EsConfig, Parser, StringInput, Syntax};
+use swc_ecma_visit::{Visit, VisitMut, VisitMutWith, VisitWith};
 
 pub fn parse_js_file(path: &Path) -> Result<Module, Error> {
     let cm = SourceMap::new(FilePathMapping::empty());
@@ -25,41 +26,11 @@ pub fn parse_js_file(path: &Path) -> Result<Module, Error> {
 }
 
 pub fn infer_var_types(module: &Module) -> HashMap<String, String> {
-    let mut types = HashMap::new();
-
-    for item in &module.body {
-        let stmt = match item {
-            ModuleItem::Stmt(stmt) => stmt,
-            ModuleItem::ModuleDecl(_) => continue,
-        };
-
-        let decl = match stmt {
-            Stmt::Decl(decl) => decl,
-            _ => continue,
-        };
-
-        let var_decl = match decl {
-            Decl::Var(var_decl) => var_decl,
-            _ => continue,
-        };
-
-        for declarator in &var_decl.decls {
-            let name = match &declarator.name {
-                Pat::Ident(ident) => ident.id.sym.to_string(),
-                _ => continue,
-            };
-
-            let Some(init) = declarator.init.as_deref() else {
-                continue;
-            };
-
-            if let Some(ty) = infer_type(init) {
-                types.insert(name, ty.to_string());
-            }
-        }
-    }
-
-    types
+    let mut inferer = VarTypeInferer {
+        types: HashMap::new(),
+    };
+    module.visit_with(&mut inferer);
+    inferer.types
 }
 
 fn infer_type(expr: &Expr) -> Option<&'static str> {
@@ -67,6 +38,7 @@ fn infer_type(expr: &Expr) -> Option<&'static str> {
         Expr::Lit(Lit::Str(_)) => Some("string"),
         Expr::Lit(Lit::Num(_)) => Some("number"),
         Expr::Lit(Lit::Bool(_)) => Some("boolean"),
+        Expr::Tpl(_) => Some("string"),
         Expr::Array(_) => Some("array"),
         Expr::Object(_) => Some("object"),
         _ => None,
@@ -92,43 +64,8 @@ pub fn generate_ts(mut module: Module, type_map: &HashMap<String, String>) -> St
 }
 
 fn annotate_module(module: &mut Module, type_map: &HashMap<String, String>) {
-    for item in &mut module.body {
-        let stmt = match item {
-            ModuleItem::Stmt(stmt) => stmt,
-            ModuleItem::ModuleDecl(_) => continue,
-        };
-
-        let decl = match stmt {
-            Stmt::Decl(decl) => decl,
-            _ => continue,
-        };
-
-        let var_decl = match decl {
-            Decl::Var(var_decl) => var_decl,
-            _ => continue,
-        };
-
-        for declarator in &mut var_decl.decls {
-            let ident = match &mut declarator.name {
-                Pat::Ident(ident) => ident,
-                _ => continue,
-            };
-
-            if ident.type_ann.is_some() {
-                continue;
-            }
-
-            let ty_name = type_map
-                .get(&ident.id.sym.to_string())
-                .map(|s| s.as_str())
-                .unwrap_or("any");
-
-            ident.type_ann = Some(Box::new(TsTypeAnn {
-                span: DUMMY_SP,
-                type_ann: Box::new(ts_type_from_name(ty_name)),
-            }));
-        }
-    }
+    let mut annotator = TypeAnnotator { type_map };
+    module.visit_mut_with(&mut annotator);
 }
 
 fn ts_type_from_name(name: &str) -> TsType {
@@ -160,5 +97,54 @@ fn ts_type_from_name(name: &str) -> TsType {
             span: DUMMY_SP,
             kind: TsKeywordTypeKind::TsAnyKeyword,
         }),
+    }
+}
+
+struct VarTypeInferer {
+    types: HashMap<String, String>,
+}
+
+impl Visit for VarTypeInferer {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let Pat::Ident(ident) = &decl.name {
+            if let Some(init) = decl.init.as_deref() {
+                if let Some(ty) = infer_type(init) {
+                    self.types.insert(ident.id.sym.to_string(), ty.to_string());
+                }
+            }
+        }
+
+        decl.visit_children_with(self);
+    }
+}
+
+struct TypeAnnotator<'a> {
+    type_map: &'a HashMap<String, String>,
+}
+
+impl VisitMut for TypeAnnotator<'_> {
+    fn visit_mut_var_declarator(&mut self, decl: &mut VarDeclarator) {
+        decl.visit_mut_children_with(self);
+
+        let Pat::Ident(ident) = &mut decl.name else {
+            return;
+        };
+
+        if ident.type_ann.is_some() {
+            return;
+        }
+
+        let name = ident.id.sym.to_string();
+        let ty_name = self
+            .type_map
+            .get(&name)
+            .map(|s| s.as_str())
+            .or_else(|| decl.init.as_deref().and_then(infer_type))
+            .unwrap_or("any");
+
+        ident.type_ann = Some(Box::new(TsTypeAnn {
+            span: DUMMY_SP,
+            type_ann: Box::new(ts_type_from_name(ty_name)),
+        }));
     }
 }

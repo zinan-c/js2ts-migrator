@@ -2,6 +2,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::migrator;
 use walkdir::WalkDir;
 
 pub fn run(input: &Path, output_dir: &Path, recursive: bool) -> io::Result<()> {
@@ -46,7 +47,11 @@ fn process_file(input_file: &Path, output_dir: &Path, relative_dir: &Path) -> io
         ));
     }
 
-    let content = fs::read_to_string(input_file)?;
+    let module = migrator::parse_js_file(input_file)
+        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
+    let type_map = migrator::infer_var_types(&module);
+    let content = migrator::generate_ts(module, &type_map);
+
     let file_stem = input_file
         .file_stem()
         .and_then(|s| s.to_str())
