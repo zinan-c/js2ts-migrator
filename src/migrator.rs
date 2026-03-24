@@ -25,6 +25,20 @@ pub fn parse_js_file(path: &Path) -> Result<Module, Error> {
     Ok(module)
 }
 
+pub fn parse_js_source(source: &str, filename: &str) -> Result<Module, Error> {
+    let cm = SourceMap::new(FilePathMapping::empty());
+    let fm = cm.new_source_file(swc_common::FileName::Custom(filename.to_string()), source.to_string());
+
+    let syntax = Syntax::Es(EsConfig {
+        jsx: true,
+        ..Default::default()
+    });
+    let mut parser = Parser::new(syntax, StringInput::from(&*fm), None);
+
+    let module = parser.parse_module()?;
+    Ok(module)
+}
+
 pub fn infer_var_types(module: &Module) -> HashMap<String, String> {
     let mut inferer = VarTypeInferer {
         types: HashMap::new(),

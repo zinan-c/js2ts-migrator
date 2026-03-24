@@ -32,3 +32,13 @@ Dry run (no writes):
 ```sh
 cargo run -- --input path/to/dir --output out --dry-run
 ```
+
+Web UI + API:
+```sh
+cargo run -- --serve
+```
+
+Then open:
+```
+http://localhost:8222
+```
