@@ -16,4 +16,8 @@ pub struct Cli {
     /// Recurse into subdirectories when input is a directory
     #[arg(short, long, default_value_t = false)]
     pub recursive: bool,
+
+    /// Preview without writing output files
+    #[arg(long, default_value_t = false)]
+    pub dry_run: bool,
 }

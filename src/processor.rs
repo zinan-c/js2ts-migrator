@@ -1,76 +1,83 @@
+use std::collections::HashSet;
 use std::fs;
-use std::io;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::migrator;
+use anyhow::{Context, Error};
 use walkdir::WalkDir;
 
-pub fn run(input: &Path, output_dir: &Path, recursive: bool) -> io::Result<()> {
+use crate::file_processor;
+
+pub fn run(input: &Path, output_dir: &Path, recursive: bool) -> Result<(), Error> {
     if input.is_file() {
-        process_file(input, output_dir, Path::new(""))?;
+        file_processor::process_single_file(input, output_dir)?;
         return Ok(());
     }
 
     if !input.is_dir() {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "input must be a file or directory",
-        ));
+        return Err(Error::msg("input must be a file or directory"));
     }
+
+    let mut success_count: usize = 0;
+    let mut failure_count: usize = 0;
 
     if recursive {
         for entry in WalkDir::new(input).into_iter().filter_map(Result::ok) {
             let path = entry.path();
             if path.is_file() && is_js(path) {
                 let rel = path.strip_prefix(input).unwrap_or(path);
-                process_file(path, output_dir, rel.parent().unwrap_or(Path::new("")))?;
+                let rel_dir = rel.parent().unwrap_or(Path::new(""));
+                let out_dir = output_dir.join(rel_dir);
+                match file_processor::process_single_file(path, &out_dir) {
+                    Ok(()) => success_count += 1,
+                    Err(_) => failure_count += 1,
+                }
             }
         }
     } else {
-        for entry in fs::read_dir(input)? {
-            let entry = entry?;
+        let mut seen_outputs: HashSet<String> = HashSet::new();
+        for entry in fs::read_dir(input).with_context(|| {
+            format!("read input directory {}", input.display())
+        })? {
+            let entry = entry.with_context(|| {
+                format!("read directory entry in {}", input.display())
+            })?;
             let path = entry.path();
             if path.is_file() && is_js(&path) {
-                process_file(&path, output_dir, Path::new(""))?;
+                if let Ok(out_path) = file_processor::output_path_for(&path, output_dir) {
+                    let key = out_path.display().to_string();
+                    if !seen_outputs.insert(key.clone()) {
+                        eprintln!(
+                            "warn: output collision in non-recursive mode: {}",
+                            key
+                        );
+                    }
+                }
+                match file_processor::process_single_file(&path, output_dir) {
+                    Ok(()) => success_count += 1,
+                    Err(_) => failure_count += 1,
+                }
             }
         }
     }
 
-    Ok(())
-}
+    println!(
+        "summary: {} succeeded, {} failed",
+        success_count, failure_count
+    );
 
-fn process_file(input_file: &Path, output_dir: &Path, relative_dir: &Path) -> io::Result<()> {
-    if !is_js(input_file) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "input file must have .js extension",
-        ));
+    if failure_count > 0 {
+        return Err(Error::msg(format!(
+            "{} file(s) failed to process",
+            failure_count
+        )));
     }
 
-    let module = migrator::parse_js_file(input_file)
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e.to_string()))?;
-    let type_map = migrator::infer_var_types(&module);
-    let content = migrator::generate_ts(module, &type_map);
-
-    let file_stem = input_file
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "invalid file name"))?;
-
-    let mut out_path = PathBuf::from(output_dir);
-    if !relative_dir.as_os_str().is_empty() {
-        out_path.push(relative_dir);
-    }
-    fs::create_dir_all(&out_path)?;
-    out_path.push(format!("{file_stem}.ts"));
-
-    fs::write(&out_path, content)?;
     Ok(())
 }
 
 fn is_js(path: &Path) -> bool {
-    path.extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("js"))
-        .unwrap_or(false)
+    matches!(
+        path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase()).as_deref(),
+        Some("js") | Some("jsx") | Some("mjs") | Some("cjs")
+    )
 }

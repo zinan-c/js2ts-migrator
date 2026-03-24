@@ -33,6 +33,12 @@ pub fn infer_var_types(module: &Module) -> HashMap<String, String> {
     inferer.types
 }
 
+pub fn count_var_decls(module: &Module) -> usize {
+    let mut counter = VarDeclCounter { count: 0 };
+    module.visit_with(&mut counter);
+    counter.count
+}
+
 fn infer_type(expr: &Expr) -> Option<&'static str> {
     match expr {
         Expr::Lit(Lit::Str(_)) => Some("string"),
@@ -104,6 +110,10 @@ struct VarTypeInferer {
     types: HashMap<String, String>,
 }
 
+struct VarDeclCounter {
+    count: usize,
+}
+
 impl Visit for VarTypeInferer {
     fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
         if let Pat::Ident(ident) = &decl.name {
@@ -112,6 +122,16 @@ impl Visit for VarTypeInferer {
                     self.types.insert(ident.id.sym.to_string(), ty.to_string());
                 }
             }
+        }
+
+        decl.visit_children_with(self);
+    }
+}
+
+impl Visit for VarDeclCounter {
+    fn visit_var_declarator(&mut self, decl: &VarDeclarator) {
+        if let Pat::Ident(_) = &decl.name {
+            self.count += 1;
         }
 
         decl.visit_children_with(self);
