@@ -11,3 +11,24 @@ implement the javascript migrate to typescript via Rust
 - Added accurate variable declaration counting
 - Added output collision warnings in non-recursive mode
 - Added support for `.js`, `.jsx`, `.mjs`, `.cjs` inputs
+
+## Usage
+Single file:
+```sh
+cargo run -- --input path/to/file.js --output out
+```
+
+Directory (non-recursive):
+```sh
+cargo run -- --input path/to/dir --output out
+```
+
+Directory (recursive):
+```sh
+cargo run -- --input path/to/dir --output out --recursive
+```
+
+Dry run (no writes):
+```sh
+cargo run -- --input path/to/dir --output out --dry-run
+```
