@@ -104,7 +104,7 @@ fn count_lines(source: &str) -> usize {
     }
 }
 
-fn is_supported_js(path: &Path) -> bool {
+pub fn is_supported_js(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|ext| ext.to_str()).map(|ext| ext.to_ascii_lowercase()).as_deref(),
         Some("js") | Some("jsx") | Some("mjs") | Some("cjs")

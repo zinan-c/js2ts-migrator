@@ -3,6 +3,8 @@ mod file_processor;
 mod migrator;
 mod processor;
 mod server;
+#[cfg(test)]
+mod unit_tests;
 
 use clap::Parser;
 
